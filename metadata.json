@@ -1,0 +1,6 @@
+{
+  "name": "Aura Companion",
+  "description": "Persönlicher KI-Companion mit dynamischen Hintergründen, Emotions-Sprites, Gedächtnis und Websuche.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
