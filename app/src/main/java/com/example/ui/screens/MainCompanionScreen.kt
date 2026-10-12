@@ -71,6 +71,7 @@ fun MainCompanionScreen(
     val persona by viewModel.persona.collectAsState()
     val userProfile by viewModel.userProfile.collectAsState()
     val llmMode by viewModel.llmMode.collectAsState()
+    val llmSettings by viewModel.llmSettings.collectAsState()
     val idleTimeout by viewModel.idleTimeoutSeconds.collectAsState()
     val statusNotice by viewModel.statusNotice.collectAsState()
 
@@ -84,6 +85,7 @@ fun MainCompanionScreen(
                 companionPersona = persona,
                 sprites = sprites,
                 llmMode = llmMode,
+                llmSettings = llmSettings,
                 idleTimeoutSeconds = idleTimeout,
                 onSaveUserProfile = { name, pref, quirks, notes ->
                     viewModel.saveUserProfile(name, pref, quirks, notes)
@@ -99,6 +101,12 @@ fun MainCompanionScreen(
                 },
                 onSetLlmMode = { mode ->
                     viewModel.setLlmMode(mode)
+                },
+                onSaveLlmSettings = { settings ->
+                    viewModel.saveLlmSettings(settings)
+                },
+                onTestLlmConnection = { settings, callback ->
+                    viewModel.testLlmConnection(settings, callback)
                 },
                 onSetIdleTimeout = { sec ->
                     viewModel.setIdleTimeout(sec)
@@ -180,12 +188,18 @@ fun MainCompanionScreen(
                                         Icon(
                                             imageVector = Icons.Default.AutoAwesome,
                                             contentDescription = null,
-                                            tint = if (llmMode == LlmMode.API_ROUTER) Color(0xFF64FFDA) else Color(0xFFFFD54F),
+                                            tint = when (llmSettings.provider) {
+                                                com.example.data.model.LlmProvider.GEMINI -> Color(0xFF64FFDA)
+                                                com.example.data.model.LlmProvider.OPENROUTER -> Color(0xFF82B1FF)
+                                                com.example.data.model.LlmProvider.LOCAL_AI -> Color(0xFFFFD54F)
+                                                com.example.data.model.LlmProvider.CUSTOM_OPENAI -> Color(0xFFFF80AB)
+                                            },
                                             modifier = Modifier.size(14.dp)
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
+                                        val displayModel = llmSettings.modelName.split("/").last().take(12)
                                         Text(
-                                            text = if (llmMode == LlmMode.API_ROUTER) "Gemini" else "Lokal",
+                                            text = "${llmSettings.provider.title.split(" ").first()}: $displayModel",
                                             style = MaterialTheme.typography.labelSmall.copy(
                                                 color = Color.White,
                                                 fontWeight = FontWeight.SemiBold,
@@ -203,7 +217,7 @@ fun MainCompanionScreen(
                                     modifier = Modifier.testTag("app_version_tag")
                                 ) {
                                     Text(
-                                        text = "v1.2",
+                                        text = "v1.3",
                                         style = MaterialTheme.typography.labelSmall.copy(
                                             color = Color.White,
                                             fontWeight = FontWeight.Bold,

@@ -49,6 +49,7 @@ class CompanionViewModel(application: Application) : AndroidViewModel(applicatio
     val userProfile = prefs.userProfileFlow
     val persona = prefs.personaFlow
     val llmMode = prefs.llmModeFlow
+    val llmSettings = prefs.llmSettingsFlow
     val idleTimeoutSeconds = prefs.idleTimeoutSecondsFlow
 
     private val _currentScreen = MutableStateFlow(CompanionScreen.STAGE)
@@ -278,6 +279,25 @@ class CompanionViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setLlmMode(mode: LlmMode) {
         prefs.saveLlmMode(mode)
+    }
+
+    fun saveLlmSettings(settings: com.example.data.model.LlmSettings) {
+        prefs.saveLlmSettings(settings)
+    }
+
+    fun testLlmConnection(
+        settings: com.example.data.model.LlmSettings,
+        onResult: (isSuccess: Boolean, message: String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val result = com.example.data.api.LlmClient.testConnection(settings)
+            if (result.isSuccess) {
+                onResult(true, result.getOrThrow())
+            } else {
+                val err = result.exceptionOrNull()?.message ?: "Verbindungsfehler"
+                onResult(false, err)
+            }
+        }
     }
 
     fun setIdleTimeout(seconds: Int) {

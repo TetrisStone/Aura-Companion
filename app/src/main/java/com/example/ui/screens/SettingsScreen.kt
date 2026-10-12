@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -76,11 +77,28 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import com.example.BuildConfig
 import com.example.data.local.PreferencesManager
 import com.example.data.local.entity.CompanionSpriteEntity
 import com.example.data.model.EmotionType
 import com.example.data.model.LlmMode
+import com.example.data.model.LlmProvider
+import com.example.data.model.LlmSettings
 import com.example.ui.components.CompanionAvatarShape
 import com.example.ui.components.getEmotionColor
 import com.example.ui.components.getEmotionIcon
@@ -92,12 +110,15 @@ fun SettingsScreen(
     companionPersona: PreferencesManager.CompanionPersona,
     sprites: List<CompanionSpriteEntity>,
     llmMode: LlmMode,
+    llmSettings: LlmSettings,
     idleTimeoutSeconds: Int,
     onSaveUserProfile: (name: String, preferences: String, quirks: String, notes: String) -> Unit,
     onSavePersona: (name: String, personality: String, backstory: String, systemPrompt: String) -> Unit,
     onAssignSprite: (emotion: EmotionType, uri: String) -> Unit,
     onResetSprite: (emotion: EmotionType) -> Unit,
     onSetLlmMode: (LlmMode) -> Unit,
+    onSaveLlmSettings: (LlmSettings) -> Unit,
+    onTestLlmConnection: (LlmSettings, (Boolean, String) -> Unit) -> Unit,
     onSetIdleTimeout: (Int) -> Unit,
     onClearChat: () -> Unit,
     onBack: () -> Unit
@@ -169,9 +190,10 @@ fun SettingsScreen(
                     1 -> CompanionPersonaTab(persona = companionPersona, onSave = onSavePersona)
                     2 -> SpritesManagerTab(sprites = sprites, onAssignSprite = onAssignSprite, onResetSprite = onResetSprite)
                     3 -> LlmRouterTab(
-                        llmMode = llmMode,
+                        llmSettings = llmSettings,
                         idleTimeout = idleTimeoutSeconds,
-                        onSetLlmMode = onSetLlmMode,
+                        onSaveLlmSettings = onSaveLlmSettings,
+                        onTestLlmConnection = onTestLlmConnection,
                         onSetIdleTimeout = onSetIdleTimeout,
                         onClearChat = onClearChat
                     )
@@ -491,12 +513,32 @@ fun SpritesManagerTab(
 
 @Composable
 fun LlmRouterTab(
-    llmMode: LlmMode,
+    llmSettings: LlmSettings,
     idleTimeout: Int,
-    onSetLlmMode: (LlmMode) -> Unit,
+    onSaveLlmSettings: (LlmSettings) -> Unit,
+    onTestLlmConnection: (LlmSettings, (Boolean, String) -> Unit) -> Unit,
     onSetIdleTimeout: (Int) -> Unit,
     onClearChat: () -> Unit
 ) {
+    var selectedProvider by remember(llmSettings) { mutableStateOf(llmSettings.provider) }
+    var apiKey by remember(llmSettings) { mutableStateOf(llmSettings.apiKey) }
+    var baseUrl by remember(llmSettings) { mutableStateOf(llmSettings.baseUrl) }
+    var modelName by remember(llmSettings) { mutableStateOf(llmSettings.modelName) }
+    var enableWebSearch by remember(llmSettings) { mutableStateOf(llmSettings.enableWebSearch) }
+    var isKeyVisible by remember { mutableStateOf(false) }
+
+    var isTesting by remember { mutableStateOf(false) }
+    var testResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    var showSavedNotice by remember { mutableStateOf(false) }
+
+    fun currentDraftSettings() = LlmSettings(
+        provider = selectedProvider,
+        apiKey = apiKey.trim(),
+        baseUrl = baseUrl.trim(),
+        modelName = modelName.trim(),
+        enableWebSearch = enableWebSearch
+    )
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -504,97 +546,391 @@ fun LlmRouterTab(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(
-            text = "KI-Router & Modell-Auswahl",
+            text = "KI-Schnittstellen & Modell-Router",
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = Color.White)
         )
         Text(
-            text = "Lege fest, welches Modell für die Gedanken und Antworten des Companions genutzt werden soll.",
+            text = "Wähle deine bevorzugte KI-Quelle. Alle Antworten des Companions werden direkt und ausschließlich von diesem Modell erzeugt.",
             style = MaterialTheme.typography.bodySmall.copy(color = Color(0xBBFFFFFF))
         )
 
-        // Radio Option 1: Externer API-Router
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = if (llmMode == LlmMode.API_ROUTER) Color(0x337C4DFF) else Color(0x1F2A284D)
-            ),
-            shape = RoundedCornerShape(16.dp),
-            border = androidx.compose.foundation.BorderStroke(
-                1.dp,
-                if (llmMode == LlmMode.API_ROUTER) Color(0xFF64FFDA) else Color(0x33FFFFFF)
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onSetLlmMode(LlmMode.API_ROUTER) }
-        ) {
-            Row(
-                modifier = Modifier.padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                RadioButton(
-                    selected = llmMode == LlmMode.API_ROUTER,
-                    onClick = { onSetLlmMode(LlmMode.API_ROUTER) },
-                    colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF64FFDA))
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Column {
-                    Text(
-                        text = "Externer API-Router (Gemini)",
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = Color.White)
-                    )
-                    Text(
-                        text = "Gemini 3.5 Flash mit Google Web-Search Integration für aktuelle Recherchen & Fakten.",
-                        style = MaterialTheme.typography.bodySmall.copy(color = Color(0xCCFFFFFF))
-                    )
+        // Provider Selection Cards
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LlmProvider.entries.forEach { providerOption ->
+                val isSelected = selectedProvider == providerOption
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isSelected) Color(0x337C4DFF) else Color(0x1F2A284D)
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (isSelected) Color(0xFF64FFDA) else Color(0x22FFFFFF)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            selectedProvider = providerOption
+                            baseUrl = providerOption.defaultBaseUrl
+                            modelName = providerOption.defaultModel
+                            testResult = null
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = isSelected,
+                            onClick = {
+                                selectedProvider = providerOption
+                                baseUrl = providerOption.defaultBaseUrl
+                                modelName = providerOption.defaultModel
+                                testResult = null
+                            },
+                            colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF64FFDA))
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = providerOption.title,
+                                    style = MaterialTheme.typography.titleSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                )
+                                if (providerOption == LlmProvider.LOCAL_AI) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        color = Color(0x4400E676),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "Offline / Kein Cloud-Zwang",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                color = Color(0xFF69F0AE),
+                                                fontSize = 9.sp
+                                            ),
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                text = providerOption.subtitle,
+                                style = MaterialTheme.typography.bodySmall.copy(color = Color(0xCCFFFFFF))
+                            )
+                        }
+                    }
                 }
             }
         }
 
-        // Radio Option 2: Lokales On-Device Modell
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = if (llmMode == LlmMode.LOCAL_LLM) Color(0x337C4DFF) else Color(0x1F2A284D)
-            ),
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Configuration Form for the selected provider
+        Surface(
+            color = Color(0x221A1838),
             shape = RoundedCornerShape(16.dp),
-            border = androidx.compose.foundation.BorderStroke(
-                1.dp,
-                if (llmMode == LlmMode.LOCAL_LLM) Color(0xFF64FFDA) else Color(0x33FFFFFF)
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onSetLlmMode(LlmMode.LOCAL_LLM) }
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x3364FFDA)),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Row(
-                modifier = Modifier.padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                RadioButton(
-                    selected = llmMode == LlmMode.LOCAL_LLM,
-                    onClick = { onSetLlmMode(LlmMode.LOCAL_LLM) },
-                    colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF64FFDA))
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Konfiguration für ${selectedProvider.title}",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = Color(0xFF64FFDA))
                 )
-                Spacer(modifier = Modifier.width(8.dp))
-                Column {
-                    Text(
-                        text = "Lokales On-Device Modell (Offline)",
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = Color.White)
+
+                // API Key Field (if needed)
+                if (selectedProvider.isKeyRequired || selectedProvider == LlmProvider.GEMINI) {
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = { apiKey = it; testResult = null },
+                        label = { Text("API-Schlüssel") },
+                        placeholder = {
+                            if (selectedProvider == LlmProvider.GEMINI) {
+                                Text("Optional (standardmäßig aus Secrets)")
+                            } else {
+                                Text("z.B. sk-or-v1-...")
+                            }
+                        },
+                        visualTransformation = if (isKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { isKeyVisible = !isKeyVisible }) {
+                                Icon(
+                                    imageVector = if (isKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = "Passwort anzeigen",
+                                    tint = Color.White
+                                )
+                            }
+                        },
+                        colors = defaultFieldColors(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
                     )
+
+                    if (selectedProvider == LlmProvider.GEMINI && apiKey.isBlank()) {
+                        Text(
+                            text = "💡 Tipp: Für Gemini wird automatisch der in AI Studio hinterlegte API-Schlüssel verwendet, sofern kein eigener Schlüssel eingetragen ist.",
+                            style = MaterialTheme.typography.labelSmall.copy(color = Color(0xAAFFFFFF))
+                        )
+                    }
+                }
+
+                // Base URL / Server Endpoint
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = { baseUrl = it; testResult = null },
+                    label = { Text("Server-Adresse / Endpunkt") },
+                    colors = defaultFieldColors(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Quick preset buttons for Local AI
+                if (selectedProvider == LlmProvider.LOCAL_AI) {
                     Text(
-                        text = "Direkt auf dem Smartphone ausgeführte Persona-Engine ohne externe Internetverbindung.",
-                        style = MaterialTheme.typography.bodySmall.copy(color = Color(0xCCFFFFFF))
+                        text = "Schnellauswahl für Endpunkt:",
+                        style = MaterialTheme.typography.labelSmall.copy(color = Color(0xAAFFFFFF))
                     )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        listOf(
+                            "http://10.0.2.2:11434/v1" to "Emulator (10.0.2.2)",
+                            "http://192.168.178.50:11434/v1" to "WLAN (Ollama)",
+                            "http://192.168.178.50:1234/v1" to "LM Studio"
+                        ).forEach { (url, label) ->
+                            Surface(
+                                color = Color(0x22FFFFFF),
+                                shape = RoundedCornerShape(8.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33FFFFFF)),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { baseUrl = url; testResult = null }
+                            ) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelSmall.copy(color = Color.White, fontSize = 10.sp),
+                                    modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = "📱 Hinweis für echtes Handy: Wenn du die App auf deinem Smartphone installierst, ersetze '192.168.178.50' durch die lokale IP-Adresse deines PCs im Heimnetzwerk. Starte Ollama auf dem PC mit 'OLLAMA_HOST=0.0.0.0 ollama serve', damit Verbindungen erlaubt sind.",
+                        style = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF80CBC4), fontSize = 11.sp)
+                    )
+                }
+
+                // Model Name
+                OutlinedTextField(
+                    value = modelName,
+                    onValueChange = { modelName = it; testResult = null },
+                    label = { Text("Modellname") },
+                    colors = defaultFieldColors(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Model Suggestion Chips
+                val modelSuggestions = when (selectedProvider) {
+                    LlmProvider.GEMINI -> listOf(
+                        "gemini-2.0-flash",
+                        "gemini-2.5-flash",
+                        "gemini-3.5-flash",
+                        "gemini-3.1-pro-preview"
+                    )
+                    LlmProvider.OPENROUTER -> listOf(
+                        "google/gemini-2.0-flash-001",
+                        "meta-llama/llama-3.3-70b-instruct",
+                        "deepseek/deepseek-chat",
+                        "anthropic/claude-3.5-haiku",
+                        "google/gemini-2.5-flash"
+                    )
+                    LlmProvider.LOCAL_AI -> listOf("llama3.2", "mistral", "qwen2.5", "phi3")
+                    LlmProvider.CUSTOM_OPENAI -> listOf("gpt-4o-mini", "llama-3.3-70b-versatile", "mistral-large")
+                }
+
+                Text(
+                    text = "Schnellauswahl für Modell (antippen):",
+                    style = MaterialTheme.typography.labelSmall.copy(color = Color(0xAAFFFFFF))
+                )
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                ) {
+                    modelSuggestions.forEach { suggestion ->
+                        val isCurrent = modelName.trim().equals(suggestion.trim(), ignoreCase = true)
+                        Surface(
+                            color = if (isCurrent) Color(0xFF7C4DFF) else Color(0x22FFFFFF),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (isCurrent) Color(0xFF64FFDA) else Color(0x33FFFFFF)
+                            ),
+                            modifier = Modifier.clickable {
+                                modelName = suggestion
+                                testResult = null
+                            }
+                        ) {
+                            Text(
+                                text = suggestion,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = if (isCurrent) Color.White else Color(0xDDFFFFFF),
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                    fontSize = 11.sp
+                                ),
+                                modifier = Modifier.padding(vertical = 6.dp, horizontal = 10.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Web Search Grounding switch (for Gemini)
+                if (selectedProvider == LlmProvider.GEMINI) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Google Websuche aktivieren",
+                                style = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontWeight = FontWeight.SemiBold)
+                            )
+                            Text(
+                                text = "Ermöglicht dem Companion, bei Fragen zu aktuellen Themen live im Web zu recherchieren.",
+                                style = MaterialTheme.typography.bodySmall.copy(color = Color(0xAAFFFFFF))
+                            )
+                        }
+                        Switch(
+                            checked = enableWebSearch,
+                            onCheckedChange = { enableWebSearch = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color(0xFF64FFDA),
+                                checkedTrackColor = Color(0xFF7C4DFF)
+                            )
+                        )
+                    }
+                }
+
+                // Test Connection & Save Action Row
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Button(
+                        onClick = {
+                            isTesting = true
+                            testResult = null
+                            onTestLlmConnection(currentDraftSettings()) { success, msg ->
+                                isTesting = false
+                                testResult = Pair(success, msg)
+                            }
+                        },
+                        enabled = !isTesting,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A284D)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        if (isTesting) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color(0xFF64FFDA), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Prüfe...", color = Color.White, fontSize = 12.sp)
+                        } else {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color(0xFF64FFDA), modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Verbindung testen", color = Color.White, fontSize = 12.sp)
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            onSaveLlmSettings(currentDraftSettings())
+                            showSavedNotice = true
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C4DFF)),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Speichern", color = Color.White, fontSize = 12.sp)
+                    }
+                }
+
+                // Test Result Feedback Banner
+                if (testResult != null) {
+                    val (success, message) = testResult!!
+                    Surface(
+                        color = if (success) Color(0x3300E676) else Color(0x33FF5252),
+                        shape = RoundedCornerShape(10.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, if (success) Color(0xFF00E676) else Color(0xFFFF5252)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.Top) {
+                            Icon(
+                                imageVector = if (success) Icons.Default.CheckCircle else Icons.Default.Error,
+                                contentDescription = null,
+                                tint = if (success) Color(0xFF00E676) else Color(0xFFFF5252),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = if (success) "Verbindung erfolgreich!" else "Verbindung fehlgeschlagen:",
+                                    style = MaterialTheme.typography.titleSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (success) Color(0xFF00E676) else Color(0xFFFF8A80)
+                                    )
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = message,
+                                    style = MaterialTheme.typography.bodySmall.copy(color = Color.White, fontSize = 12.sp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (showSavedNotice) {
+                    Surface(
+                        color = Color(0x4400E676),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "✅ Einstellungen gespeichert und aktiv!",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = Color(0xFF69F0AE),
+                                fontWeight = FontWeight.Bold
+                            ),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
         // Idle-Timeout Konfiguration
         Text(
-            text = "Idle-Timeout (Inaktivitäts-Erkennung)",
+            text = "Inaktivitäts-Erkennung (Idle-Modus)",
             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = Color.White)
         )
         Text(
-            text = "Zeitspanne ohne Nutzereingabe, nach der der Companion automatisch in die Idle-Pose (z.B. Handy daddeln oder Buch lesen) wechselt.",
+            text = "Nach wie vielen Minuten ohne Eingabe soll der Companion automatisch in eine Lese- oder Smartphone-Pose wechseln?",
             style = MaterialTheme.typography.bodySmall.copy(color = Color(0xBBFFFFFF))
         )
 
@@ -629,7 +965,7 @@ fun LlmRouterTab(
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         Button(
             onClick = onClearChat,
@@ -639,7 +975,7 @@ fun LlmRouterTab(
         ) {
             Icon(Icons.Default.Refresh, contentDescription = null, tint = Color(0xFFFF8A80))
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Chatverlauf zurücksetzen & Neu begrüßen", color = Color(0xFFFF8A80))
+            Text("Aktuellen Chatverlauf leeren", color = Color(0xFFFF8A80))
         }
     }
 }

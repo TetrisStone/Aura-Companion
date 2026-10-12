@@ -3,6 +3,8 @@ package com.example.data.local
 import android.content.Context
 import android.content.SharedPreferences
 import com.example.data.model.LlmMode
+import com.example.data.model.LlmProvider
+import com.example.data.model.LlmSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,6 +35,9 @@ class PreferencesManager(context: Context) {
 
     private val _llmModeFlow = MutableStateFlow(loadLlmMode())
     val llmModeFlow: StateFlow<LlmMode> = _llmModeFlow.asStateFlow()
+
+    private val _llmSettingsFlow = MutableStateFlow(loadLlmSettings())
+    val llmSettingsFlow: StateFlow<LlmSettings> = _llmSettingsFlow.asStateFlow()
 
     private val _idleTimeoutSecondsFlow = MutableStateFlow(loadIdleTimeout())
     val idleTimeoutSecondsFlow: StateFlow<Int> = _idleTimeoutSecondsFlow.asStateFlow()
@@ -83,6 +88,41 @@ Merkmale deines Verhaltens:
             .putString("companion_system_prompt", persona.systemPrompt)
             .apply()
         _personaFlow.value = persona
+    }
+
+    fun loadLlmSettings(): LlmSettings {
+        val providerId = prefs.getString("llm_provider_id", LlmProvider.GEMINI.id)
+        val provider = LlmProvider.fromId(providerId)
+        val apiKey = prefs.getString("llm_api_key", "") ?: ""
+        val baseUrl = prefs.getString("llm_base_url", provider.defaultBaseUrl) ?: provider.defaultBaseUrl
+        var modelName = prefs.getString("llm_model_name", provider.defaultModel) ?: provider.defaultModel
+        if (modelName == "gemini-3.5-flash") {
+            modelName = "gemini-2.0-flash"
+        }
+        val enableSearch = prefs.getBoolean("llm_enable_search", true)
+        return LlmSettings(
+            provider = provider,
+            apiKey = apiKey,
+            baseUrl = baseUrl,
+            modelName = modelName,
+            enableWebSearch = enableSearch
+        )
+    }
+
+    fun saveLlmSettings(settings: LlmSettings) {
+        prefs.edit()
+            .putString("llm_provider_id", settings.provider.id)
+            .putString("llm_api_key", settings.apiKey)
+            .putString("llm_base_url", settings.baseUrl)
+            .putString("llm_model_name", settings.modelName)
+            .putBoolean("llm_enable_search", settings.enableWebSearch)
+            .putString(
+                "llm_mode",
+                if (settings.provider == LlmProvider.LOCAL_AI) LlmMode.LOCAL_LLM.name else LlmMode.API_ROUTER.name
+            )
+            .apply()
+        _llmSettingsFlow.value = settings
+        _llmModeFlow.value = if (settings.provider == LlmProvider.LOCAL_AI) LlmMode.LOCAL_LLM else LlmMode.API_ROUTER
     }
 
     fun loadLlmMode(): LlmMode {
