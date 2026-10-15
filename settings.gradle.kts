@@ -25,3 +25,4 @@ dependencyResolutionManagement {
 rootProject.name = "Aura Companion"
 
 include(":app")
+include(":llama")

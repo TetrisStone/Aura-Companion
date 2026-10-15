@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Settings
@@ -132,6 +133,16 @@ fun MainCompanionScreen(
             )
         }
 
+        CompanionScreen.LOCAL_MODELS -> {
+            LocalModelsScreen(
+                llmSettings = llmSettings,
+                onSaveLlmSettings = { settings ->
+                    viewModel.saveLlmSettings(settings)
+                },
+                onBack = { viewModel.navigateTo(CompanionScreen.STAGE) }
+            )
+        }
+
         CompanionScreen.STAGE, CompanionScreen.BACKGROUNDS_PICKER -> {
             Box(
                 modifier = Modifier
@@ -189,6 +200,7 @@ fun MainCompanionScreen(
                                             imageVector = Icons.Default.AutoAwesome,
                                             contentDescription = null,
                                             tint = when (llmSettings.provider) {
+                                                com.example.data.model.LlmProvider.ON_DEVICE -> Color(0xFF00E676)
                                                 com.example.data.model.LlmProvider.GEMINI -> Color(0xFF64FFDA)
                                                 com.example.data.model.LlmProvider.OPENROUTER -> Color(0xFF82B1FF)
                                                 com.example.data.model.LlmProvider.LOCAL_AI -> Color(0xFFFFD54F)
@@ -233,6 +245,27 @@ fun MainCompanionScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
+                                // Local GGUF Models Button
+                                IconButton(
+                                    onClick = { viewModel.navigateTo(CompanionScreen.LOCAL_MODELS) },
+                                    modifier = Modifier.testTag("open_local_models_button")
+                                ) {
+                                    Surface(
+                                        color = Color(0x7716142E),
+                                        shape = CircleShape,
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                Icons.Filled.Memory,
+                                                contentDescription = "Lokale Modelle (GGUF)",
+                                                tint = Color(0xFF64FFDA),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
                                 // Switch Background Button
                                 IconButton(
                                     onClick = { showBackgroundsDialog = true },

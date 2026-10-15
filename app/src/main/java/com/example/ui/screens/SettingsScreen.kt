@@ -642,6 +642,26 @@ fun LlmRouterTab(
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, color = Color(0xFF64FFDA))
                 )
 
+                if (selectedProvider == LlmProvider.ON_DEVICE) {
+                    Surface(
+                        color = Color(0x3300E676),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = "🔒 100% Offline & Lokal",
+                                style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFF00E676), fontWeight = FontWeight.Bold)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Das LLM läuft direkt im Prozess von Aura-Companion über die NDK/JNI-Anbindung von llama.cpp (Snapdragon 8 Elite / Adreno 840). Verwalte importierte GGUF-Dateien, Hardware-Beschleunigung (OpenCL) und Threads im Screen 'Lokale Modelle'.",
+                                style = MaterialTheme.typography.bodySmall.copy(color = Color.White, fontSize = 11.sp)
+                            )
+                        }
+                    }
+                }
+
                 // API Key Field (if needed)
                 if (selectedProvider.isKeyRequired || selectedProvider == LlmProvider.GEMINI) {
                     OutlinedTextField(
@@ -739,6 +759,11 @@ fun LlmRouterTab(
 
                 // Model Suggestion Chips
                 val modelSuggestions = when (selectedProvider) {
+                    LlmProvider.ON_DEVICE -> listOf(
+                        "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+                        "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+                        "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf"
+                    )
                     LlmProvider.GEMINI -> listOf(
                         "gemini-2.0-flash",
                         "gemini-2.5-flash",

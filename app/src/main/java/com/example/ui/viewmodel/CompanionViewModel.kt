@@ -26,7 +26,8 @@ enum class CompanionScreen {
     STAGE,
     SETTINGS,
     MEMORIES,
-    BACKGROUNDS_PICKER
+    BACKGROUNDS_PICKER,
+    LOCAL_MODELS
 }
 
 class CompanionViewModel(application: Application) : AndroidViewModel(application) {

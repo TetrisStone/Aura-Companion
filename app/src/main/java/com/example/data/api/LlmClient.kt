@@ -1,12 +1,15 @@
 package com.example.data.api
 
+import android.content.Context
 import android.util.Log
 import com.example.BuildConfig
+import com.example.data.local.OnDeviceEngine
 import com.example.data.model.LlmProvider
 import com.example.data.model.LlmSettings
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -16,6 +19,12 @@ import java.util.concurrent.TimeUnit
 
 object LlmClient {
     private const val TAG = "LlmClient"
+
+    private var appContext: Context? = null
+
+    fun initialize(context: Context) {
+        appContext = context.applicationContext
+    }
 
     private val moshi: Moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
@@ -46,10 +55,70 @@ object LlmClient {
         enableGoogleSearch: Boolean = false
     ): Result<GenerationResult> = withContext(Dispatchers.IO) {
         when (settings.provider) {
+            LlmProvider.ON_DEVICE -> generateOnDevice(settings, systemPrompt, conversation)
             LlmProvider.GEMINI -> generateGemini(settings, systemPrompt, conversation, enableGoogleSearch)
             LlmProvider.OPENROUTER,
             LlmProvider.LOCAL_AI,
             LlmProvider.CUSTOM_OPENAI -> generateOpenAiCompatible(settings, systemPrompt, conversation)
+        }
+    }
+
+    private suspend fun generateOnDevice(
+        settings: LlmSettings,
+        systemPrompt: String,
+        conversation: List<ChatMessageInput>
+    ): Result<GenerationResult> {
+        val context = appContext ?: return Result.failure(
+            IllegalStateException("App-Kontext für On-Device Engine nicht initialisiert.")
+        )
+
+        val onDeviceEngine = OnDeviceEngine.getInstance(context)
+
+        // 1. Ensure model is loaded with current settings (acceleration, context, threads)
+        val loadResult = onDeviceEngine.ensureModelLoaded(settings)
+        if (loadResult.isFailure) {
+            return Result.failure(loadResult.exceptionOrNull() ?: Exception("Fehler beim Laden des Modells"))
+        }
+
+        // 2. Set system prompt if needed
+        val sysPromptResult = onDeviceEngine.setSystemPromptIfNeeded(systemPrompt)
+        if (sysPromptResult.isFailure) {
+            return Result.failure(sysPromptResult.exceptionOrNull() ?: Exception("Fehler beim Setzen des System-Prompts"))
+        }
+
+        // 3. User message
+        val latestUserMessage = conversation.lastOrNull { it.role == "user" }?.content
+            ?: return Result.failure(IllegalArgumentException("Keine Benutzernachricht übergeben."))
+
+        return try {
+            val tokenList = mutableListOf<String>()
+            val maxTokens = if (settings.maxTokens > 0) settings.maxTokens else 1024
+
+            // Stream tokens and collect
+            onDeviceEngine.generate(latestUserMessage, maxTokens).collect { token ->
+                tokenList.add(token)
+            }
+
+            val rawText = tokenList.joinToString("").trim()
+            val (cleanText, emotionTag) = parseEmotionTag(rawText)
+
+            // Diagnostic logging
+            val diag = onDeviceEngine.getLastDiagnostics()
+            Log.i(TAG, "ON_DEVICE Generation complete:\n$diag")
+
+            Result.success(
+                GenerationResult(
+                    text = cleanText,
+                    emotionTag = emotionTag,
+                    isWebSearchUsed = false,
+                    searchSources = ""
+                )
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "On-device generation failed", e)
+            Result.failure(Exception("On-Device Fehler: ${e.localizedMessage ?: e.message}", e))
         }
     }
 
@@ -91,74 +160,68 @@ object LlmClient {
             )
         }
 
+        val baseUrl = settings.baseUrl.ifBlank { "https://generativelanguage.googleapis.com" }.trimEnd('/')
         val modelName = settings.modelName.ifBlank { "gemini-2.0-flash" }
-        val baseUrl = settings.baseUrl.trim().removeSuffix("/")
-        val url = "$baseUrl/v1beta/models/$modelName:generateContent?key=$apiKey"
+
+        val endpointUrl = "$baseUrl/v1beta/models/$modelName:generateContent?key=$apiKey"
 
         val contents = conversation.map { msg ->
-            val role = if (msg.role.equals("assistant", ignoreCase = true) || msg.role.equals("model", ignoreCase = true)) {
-                "model"
-            } else {
-                "user"
-            }
+            val role = if (msg.role == "assistant") "model" else "user"
             GeminiContent(
                 role = role,
                 parts = listOf(GeminiPart(text = msg.content))
             )
         }
 
+        val systemInstruction = GeminiContent(
+            parts = listOf(GeminiPart(text = systemPrompt))
+        )
+
         val tools = if (enableGoogleSearch && settings.enableWebSearch) {
-            listOf(mapOf("googleSearch" to emptyMap<String, Any>()))
+            listOf(mapOf("google_search" to emptyMap<String, String>()))
         } else {
             null
         }
 
         val requestPayload = GeminiRequest(
             contents = contents,
-            systemInstruction = GeminiContent(parts = listOf(GeminiPart(text = systemPrompt))),
+            systemInstruction = systemInstruction,
             tools = tools
         )
 
+        val jsonAdapter = moshi.adapter(GeminiRequest::class.java)
+        val requestBodyString = jsonAdapter.toJson(requestPayload)
+
+        val request = Request.Builder()
+            .url(endpointUrl)
+            .addHeader("Content-Type", "application/json")
+            .post(requestBodyString.toRequestBody("application/json".toMediaType()))
+            .build()
+
         return try {
-            val adapter = moshi.adapter(GeminiRequest::class.java)
-            val jsonBody = adapter.toJson(requestPayload)
-
-            val request = Request.Builder()
-                .url(url)
-                .post(jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                .build()
-
             val response = httpClient.newCall(request).execute()
-            val responseString = response.body?.string() ?: ""
+            val responseBody = response.body?.string() ?: ""
 
             if (!response.isSuccessful) {
-                Log.w(TAG, "Gemini API Fehler (${response.code}): $responseString")
+                Log.e(TAG, "Gemini HTTP-Fehler: ${response.code} -> $responseBody")
+                val errorMsg = parseErrorDetail(responseBody)
                 return Result.failure(
-                    Exception("Gemini HTTP ${response.code}: ${parseErrorDetail(responseString)}")
+                    Exception("Gemini API Fehler (${response.code}): $errorMsg")
                 )
             }
 
             val responseAdapter = moshi.adapter(GeminiResponse::class.java)
-            val parsed = responseAdapter.fromJson(responseString)
-            val candidate = parsed?.candidates?.firstOrNull()
-            val rawText = candidate?.content?.parts?.firstOrNull()?.text ?: ""
+            val parsedResponse = responseAdapter.fromJson(responseBody)
 
-            if (rawText.isBlank()) {
-                return Result.failure(Exception("Gemini hat eine leere Antwort geliefert."))
-            }
+            val candidate = parsedResponse?.candidates?.firstOrNull()
+            val rawText = candidate?.content?.parts?.firstOrNull { !it.text.isNullOrBlank() }?.text
+                ?: return Result.failure(Exception("Keine Antwort von Gemini erhalten."))
 
-            // Web search sources
-            val grounding = candidate?.groundingMetadata
-            val searchQueries = grounding?.webSearchQueries ?: emptyList()
-            val sources = grounding?.groundingChunks?.mapNotNull { it.web?.title ?: it.web?.uri } ?: emptyList()
-            val isWebSearch = searchQueries.isNotEmpty() || sources.isNotEmpty()
-            val sourcesSummary = if (isWebSearch) {
-                val qStr = if (searchQueries.isNotEmpty()) "Suchanfragen: ${searchQueries.joinToString(", ")}" else ""
-                val srcStr = if (sources.isNotEmpty()) "Quellen: ${sources.take(3).joinToString("; ")}" else ""
-                listOf(qStr, srcStr).filter { it.isNotBlank() }.joinToString("\n")
-            } else {
-                ""
-            }
+            val hasSearch = candidate.groundingMetadata?.webSearchQueries?.isNotEmpty() == true
+            val sources = candidate.groundingMetadata?.groundingChunks
+                ?.mapNotNull { it.web?.title ?: it.web?.uri }
+                ?.distinct()
+                ?.joinToString(", ") ?: ""
 
             val (cleanText, emotionTag) = parseEmotionTag(rawText)
 
@@ -166,13 +229,13 @@ object LlmClient {
                 GenerationResult(
                     text = cleanText,
                     emotionTag = emotionTag,
-                    isWebSearchUsed = isWebSearch,
-                    searchSources = sourcesSummary
+                    isWebSearchUsed = hasSearch,
+                    searchSources = sources
                 )
             )
         } catch (e: Exception) {
             Log.e(TAG, "Gemini Request Exception", e)
-            Result.failure(e)
+            Result.failure(Exception("Gemini Verbindungsfehler: ${e.localizedMessage}", e))
         }
     }
 
@@ -181,15 +244,7 @@ object LlmClient {
         systemPrompt: String,
         conversation: List<ChatMessageInput>
     ): Result<GenerationResult> {
-        val model = settings.modelName.ifBlank {
-            if (settings.provider == LlmProvider.LOCAL_AI) "llama3.2" else "meta-llama/llama-3.3-70b-instruct"
-        }
-
-        var baseUrl = settings.baseUrl.trim().removeSuffix("/")
-        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
-            baseUrl = "http://$baseUrl"
-        }
-
+        val baseUrl = settings.baseUrl.ifBlank { settings.provider.defaultBaseUrl }.trimEnd('/')
         val endpointUrl = if (baseUrl.endsWith("/chat/completions")) {
             baseUrl
         } else {
@@ -197,56 +252,57 @@ object LlmClient {
         }
 
         val messages = mutableListOf<OpenAiMessage>()
-        if (systemPrompt.isNotBlank()) {
-            messages.add(OpenAiMessage(role = "system", content = systemPrompt))
-        }
+        messages.add(OpenAiMessage(role = "system", content = systemPrompt))
         conversation.forEach { msg ->
-            val role = if (msg.role.equals("model", ignoreCase = true)) "assistant" else msg.role
-            messages.add(OpenAiMessage(role = role, content = msg.content))
+            messages.add(OpenAiMessage(role = msg.role, content = msg.content))
         }
 
+        val modelName = settings.modelName.ifBlank { settings.provider.defaultModel }
+
         val requestPayload = OpenAiChatRequest(
-            model = model,
+            model = modelName,
             messages = messages,
             temperature = 0.7f
         )
 
+        val jsonAdapter = moshi.adapter(OpenAiChatRequest::class.java)
+        val requestBodyString = jsonAdapter.toJson(requestPayload)
+
+        val requestBuilder = Request.Builder()
+            .url(endpointUrl)
+            .addHeader("Content-Type", "application/json")
+
+        if (settings.apiKey.isNotBlank()) {
+            requestBuilder.addHeader("Authorization", "Bearer ${settings.apiKey.trim()}")
+        }
+
+        if (settings.provider == LlmProvider.OPENROUTER) {
+            requestBuilder.addHeader("HTTP-Referer", "https://github.com/aistudio/aura-companion")
+            requestBuilder.addHeader("X-Title", "Aura Companion")
+        }
+
+        val request = requestBuilder
+            .post(requestBodyString.toRequestBody("application/json".toMediaType()))
+            .build()
+
         return try {
-            val adapter = moshi.adapter(OpenAiChatRequest::class.java)
-            val jsonBody = adapter.toJson(requestPayload)
-
-            val reqBuilder = Request.Builder()
-                .url(endpointUrl)
-                .post(jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType()))
-
-            if (settings.apiKey.isNotBlank()) {
-                reqBuilder.addHeader("Authorization", "Bearer ${settings.apiKey.trim()}")
-            }
-
-            if (settings.provider == LlmProvider.OPENROUTER) {
-                reqBuilder.addHeader("HTTP-Referer", "https://aistudio.google.com")
-                reqBuilder.addHeader("X-Title", "Aura Companion")
-            }
-
-            val response = httpClient.newCall(reqBuilder.build()).execute()
-            val responseString = response.body?.string() ?: ""
+            val response = httpClient.newCall(request).execute()
+            val responseBody = response.body?.string() ?: ""
 
             if (!response.isSuccessful) {
-                Log.w(TAG, "OpenAI-kompatibler API Fehler (${response.code}): $responseString")
-                val detail = parseErrorDetail(responseString)
+                Log.e(TAG, "OpenAI-kompatibler HTTP-Fehler: ${response.code} von $endpointUrl -> $responseBody")
+                val errorMsg = parseErrorDetail(responseBody)
                 return Result.failure(
-                    Exception("HTTP ${response.code} ($endpointUrl): $detail")
+                    Exception("Server-Fehler (${response.code}) von $modelName: $errorMsg")
                 )
             }
 
             val responseAdapter = moshi.adapter(OpenAiChatResponse::class.java)
-            val parsed = responseAdapter.fromJson(responseString)
-            val rawText = parsed?.choices?.firstOrNull()?.message?.content ?: ""
+            val parsedResponse = responseAdapter.fromJson(responseBody)
 
-            if (rawText.isBlank()) {
-                return Result.failure(
-                    Exception("Modell '$model' hat keine Textantwort zurückgegeben.")
-                )
+            val rawText = parsedResponse?.choices?.firstOrNull()?.message?.content
+            if (rawText.isNullOrBlank()) {
+                return Result.failure(Exception("Leere Antwort von $modelName erhalten."))
             }
 
             val (cleanText, emotionTag) = parseEmotionTag(rawText)

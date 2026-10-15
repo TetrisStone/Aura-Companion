@@ -17,6 +17,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        com.example.data.api.LlmClient.initialize(applicationContext)
         setContent {
             MyApplicationTheme {
                 Surface(

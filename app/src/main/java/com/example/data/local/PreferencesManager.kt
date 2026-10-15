@@ -2,6 +2,7 @@ package com.example.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.example.data.model.AccelerationMode
 import com.example.data.model.LlmMode
 import com.example.data.model.LlmProvider
 import com.example.data.model.LlmSettings
@@ -100,12 +101,29 @@ Merkmale deines Verhaltens:
             modelName = "gemini-2.0-flash"
         }
         val enableSearch = prefs.getBoolean("llm_enable_search", true)
+        val activeModelPath = prefs.getString("llm_local_model_path", "") ?: ""
+        val accelMode = AccelerationMode.fromString(prefs.getString("llm_accel_mode", AccelerationMode.CPU.name))
+        val contextLen = prefs.getInt("llm_context_length", 4096)
+        val cpuThreads = prefs.getInt("llm_cpu_threads", 6)
+        val temp = prefs.getFloat("llm_temperature", 0.7f)
+        val topP = prefs.getFloat("llm_top_p", 0.95f)
+        val maxTokens = prefs.getInt("llm_max_tokens", 1024)
+        val lastDiag = prefs.getString("llm_last_diagnostics", "") ?: ""
+
         return LlmSettings(
             provider = provider,
             apiKey = apiKey,
             baseUrl = baseUrl,
             modelName = modelName,
-            enableWebSearch = enableSearch
+            enableWebSearch = enableSearch,
+            activeLocalModelPath = activeModelPath,
+            accelerationMode = accelMode,
+            contextLength = contextLen,
+            cpuThreads = cpuThreads,
+            temperature = temp,
+            topP = topP,
+            maxTokens = maxTokens,
+            lastDiagnostics = lastDiag
         )
     }
 
@@ -116,13 +134,23 @@ Merkmale deines Verhaltens:
             .putString("llm_base_url", settings.baseUrl)
             .putString("llm_model_name", settings.modelName)
             .putBoolean("llm_enable_search", settings.enableWebSearch)
+            .putString("llm_local_model_path", settings.activeLocalModelPath)
+            .putString("llm_accel_mode", settings.accelerationMode.name)
+            .putInt("llm_context_length", settings.contextLength)
+            .putInt("llm_cpu_threads", settings.cpuThreads)
+            .putFloat("llm_temperature", settings.temperature)
+            .putFloat("llm_top_p", settings.topP)
+            .putInt("llm_max_tokens", settings.maxTokens)
+            .putString("llm_last_diagnostics", settings.lastDiagnostics)
             .putString(
                 "llm_mode",
-                if (settings.provider == LlmProvider.LOCAL_AI) LlmMode.LOCAL_LLM.name else LlmMode.API_ROUTER.name
+                if (settings.provider == LlmProvider.LOCAL_AI || settings.provider == LlmProvider.ON_DEVICE)
+                    LlmMode.LOCAL_LLM.name else LlmMode.API_ROUTER.name
             )
             .apply()
         _llmSettingsFlow.value = settings
-        _llmModeFlow.value = if (settings.provider == LlmProvider.LOCAL_AI) LlmMode.LOCAL_LLM else LlmMode.API_ROUTER
+        _llmModeFlow.value = if (settings.provider == LlmProvider.LOCAL_AI || settings.provider == LlmProvider.ON_DEVICE)
+            LlmMode.LOCAL_LLM else LlmMode.API_ROUTER
     }
 
     fun loadLlmMode(): LlmMode {

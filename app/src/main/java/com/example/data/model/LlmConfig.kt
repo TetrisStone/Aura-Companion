@@ -1,5 +1,15 @@
 package com.example.data.model
 
+enum class AccelerationMode(val label: String, val nGpuLayers: Int) {
+    CPU("CPU", 0),
+    GPU_OPENCL("GPU (OpenCL)", 99);
+
+    companion object {
+        fun fromString(value: String?): AccelerationMode =
+            entries.firstOrNull { it.name.equals(value, ignoreCase = true) || it.label.equals(value, ignoreCase = true) } ?: CPU
+    }
+}
+
 enum class LlmProvider(
     val id: String,
     val title: String,
@@ -8,6 +18,14 @@ enum class LlmProvider(
     val defaultModel: String,
     val isKeyRequired: Boolean
 ) {
+    ON_DEVICE(
+        id = "ON_DEVICE",
+        title = "Lokales Modell (On-Device)",
+        subtitle = "100% Offline & Privat via llama.cpp (GGUF)",
+        defaultBaseUrl = "",
+        defaultModel = "",
+        isKeyRequired = false
+    ),
     GEMINI(
         id = "GEMINI",
         title = "Google Gemini",
@@ -52,5 +70,14 @@ data class LlmSettings(
     val apiKey: String = "",
     val baseUrl: String = LlmProvider.GEMINI.defaultBaseUrl,
     val modelName: String = LlmProvider.GEMINI.defaultModel,
-    val enableWebSearch: Boolean = true
+    val enableWebSearch: Boolean = true,
+    // On-Device Llama settings
+    val activeLocalModelPath: String = "",
+    val accelerationMode: AccelerationMode = AccelerationMode.CPU,
+    val contextLength: Int = 4096,
+    val cpuThreads: Int = 6,
+    val temperature: Float = 0.7f,
+    val topP: Float = 0.95f,
+    val maxTokens: Int = 1024,
+    val lastDiagnostics: String = ""
 )
